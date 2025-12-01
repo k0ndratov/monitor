@@ -1,35 +1,34 @@
 <script setup lang="ts">
 import { ref, onBeforeUnmount } from 'vue';
+import { v4 as uuid } from 'uuid';
 import type { Ref } from 'vue';
 
 interface Monitor {
-  id: number;
+  id: string;
   api: string;
-  status: 'on' | 'off';
+  status: 'on' | 'off' | 'unknown';
+  lastUpdate?: Date;
 }
 
 const DEFAULT_MONITORS: Monitor[] = [
-  { id: 1, api: 'stub/v1/api/super/test', status: 'on' },
-  { id: 2, api: 'stub/v31/api/atom/witch', status: 'off' }
+  { id: uuid(), api: 'stub/v1/api/super/test', status: 'on' },
+  { id: uuid(), api: 'stub/v31/api/atom/witch', status: 'off' }
 ]
-const monitors: Ref<Monitor[]> = ref(DEFAULT_MONITORS);
+const monitors: Ref<Monitor[]> = ref([]);
 const apiUrl = ref('');
 const status: Ref<number | null> = ref(null);
 const error: Ref<string | null> = ref(null);
 const isLoading = ref(false);
 const timers: Ref<number[]> = ref([]);
-const intervals: Ref<number[]> = ref([]);
 
-const addMonitor = () => {
-  const newMonitor: Monitor = { id: monitors.value.length + 1, api: apiUrl.value, status: 'off' }
+const addMonitor = (url: string) => {
+  const newMonitor: Monitor = { id: uuid(), api: url, status: 'unknown' }
   monitors.value.push(newMonitor);
-  const interval = setInterval(async () => {
-    const status = await fetchData(newMonitor.api);
-    monitors.value.find((monitor) => monitor.id === newMonitor.id)!.status = status === 200 ? 'on' :
-      'off';
-  }, 2000)
-  intervals.value.push(interval)
 };
+
+const removeMonitor = (id: string) => {
+  monitors.value = monitors.value.filter((monitor) => monitor.id !== id)
+}
 
 const ping = async () => {
   try {
@@ -38,7 +37,7 @@ const ping = async () => {
     status.value = response.status;
     await new Promise((resolve) => setTimeout(resolve, 2000));
     // For error check
-    ar;
+    throw new Error('Test error')
   } catch (e) {
     if (e instanceof Error) {
       error.value = e.message
@@ -60,22 +59,33 @@ const fetchData = async (apiUrl: string): Promise<number> => {
   return response.status;
 }
 
-monitors.value.forEach((monitor) => {
-  const interval = setInterval(async () => {
-    const status = await fetchData(monitor.api);
-    monitor.status = status === 200 ? 'on' : 'off';
-  }, 2000);
-
-  intervals.value.push(interval);
+DEFAULT_MONITORS.forEach((monitor) => {
+  addMonitor(monitor.api);
 })
+
+const interval = setInterval(() => {
+  const promises = monitors.value.map(async (monitor) => {
+    let status;
+    try {
+      status = await fetchData(monitor.api);
+    } catch (e) {
+      monitor.status = 'off';
+      return;
+    } finally {
+      monitor.lastUpdate = new Date();
+    }
+
+    monitor.status = status === 200 ? 'on' : 'off';
+  })
+
+  Promise.all(promises)
+}, 2000)
 
 onBeforeUnmount(() => {
   timers.value.forEach((timer) => {
     clearTimeout(timer);
   })
-  intervals.value.forEach((interval) => {
-    clearInterval(interval);
-  })
+  clearInterval(interval);
 })
 </script>
 
@@ -87,7 +97,7 @@ onBeforeUnmount(() => {
       <input v-model="apiUrl" id="api" type="text" required />
     </label>
     <button type="submit">Check</button>
-    <button @click="addMonitor" type="button">Add to auto monitoring</button>
+    <button @click="addMonitor(apiUrl)" type="button">Add to auto monitoring</button>
     <div v-if="status">{{ status }}</div>
     <div v-if="error">Error: {{ error }}</div>
   </form>
@@ -97,12 +107,16 @@ onBeforeUnmount(() => {
       <tr>
         <th>Api</th>
         <th>Status</th>
+        <th>Last update</th>
+        <th></th>
       </tr>
     </thead>
     <tbody>
       <tr v-for="monitor in monitors" :key="monitor.id">
         <td>{{ monitor.api }}</td>
         <td>{{ monitor.status }}</td>
+        <td>{{ monitor.lastUpdate }}</td>
+        <td><button @click="removeMonitor(monitor.id)">X</button></td>
       </tr>
     </tbody>
   </table>
