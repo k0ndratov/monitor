@@ -3,10 +3,12 @@ import { ref, onBeforeUnmount } from 'vue';
 import { v4 as uuid } from 'uuid';
 import type { Ref } from 'vue';
 
+type ApiStatus = 'on' | 'off' | 'unknown';
+
 interface Monitor {
   id: string;
   api: string;
-  status: 'on' | 'off' | 'unknown';
+  status: ApiStatus;
   lastUpdate?: Date;
 }
 
@@ -16,7 +18,7 @@ const DEFAULT_MONITORS: Monitor[] = [
 ]
 const monitors: Ref<Monitor[]> = ref([]);
 const apiUrl = ref('');
-const status: Ref<number | null> = ref(null);
+const status: Ref<string | null> = ref(null);
 const error: Ref<string | null> = ref(null);
 const isLoading = ref(false);
 const timers: Ref<number[]> = ref([]);
@@ -33,11 +35,7 @@ const removeMonitor = (id: string) => {
 const ping = async () => {
   try {
     isLoading.value = true;
-    const response = await fetch(apiUrl.value);
-    status.value = response.status;
-    await new Promise((resolve) => setTimeout(resolve, 2000));
-    // For error check
-    throw new Error('Test error')
+    status.value = await checkApi(apiUrl.value);
   } catch (e) {
     if (e instanceof Error) {
       error.value = e.message
@@ -54,31 +52,37 @@ const ping = async () => {
   }
 }
 
-const fetchData = async (apiUrl: string): Promise<number> => {
+const statusToString = (status: number | null): ApiStatus => {
+  if (!status) return 'unknown'
+
+  return status === 200 ? 'on' : 'off'
+}
+
+const checkApi = async (apiUrl: string): Promise<ApiStatus> => {
   const response = await fetch(apiUrl);
-  return response.status;
+  return statusToString(response.status);
 }
 
 DEFAULT_MONITORS.forEach((monitor) => {
   addMonitor(monitor.api);
 })
 
-const interval = setInterval(() => {
+const interval = setInterval(async () => {
   const promises = monitors.value.map(async (monitor) => {
-    let status;
+    let status: ApiStatus = 'unknown';
+
     try {
-      status = await fetchData(monitor.api);
+      status = await checkApi(monitor.api);
     } catch (e) {
-      monitor.status = 'off';
-      return;
+      console.error(e);
     } finally {
-      monitor.lastUpdate = new Date();
+      monitor.status = status;
     }
 
-    monitor.status = status === 200 ? 'on' : 'off';
+    monitor.lastUpdate = new Date();
   })
 
-  Promise.all(promises)
+  await Promise.all(promises);
 }, 2000)
 
 onBeforeUnmount(() => {
